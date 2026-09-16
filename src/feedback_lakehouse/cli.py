@@ -33,11 +33,17 @@ def run(
 def report(
     database: Annotated[Path, typer.Option()] = Path("build/lakehouse.duckdb"),
 ) -> None:
-    """Print pipeline counts and data-quality status."""
+    """Print pipeline counts and data-quality status; exit 1 if any check fails.
+
+    The Airflow quality_gate task runs this command, so a failed invariant
+    has to be a non-zero exit code or the gate cannot stop anything.
+    """
 
     with LakehousePipeline(database) as pipeline:
         payload = {"counts": pipeline.counts(), "quality_checks": pipeline.quality_checks()}
     typer.echo(json.dumps(payload, indent=2))
+    if not all(payload["quality_checks"].values()):
+        raise typer.Exit(code=1)
 
 
 @app.command()
