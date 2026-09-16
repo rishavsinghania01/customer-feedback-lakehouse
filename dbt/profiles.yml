@@ -1,0 +1,7 @@
+customer_feedback_lakehouse:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      path: "{{ env_var('LAKEHOUSE_DB', '../build/lakehouse.duckdb') }}"
+      threads: 4

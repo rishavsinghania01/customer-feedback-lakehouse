@@ -1,0 +1,23 @@
+version: 2
+
+sources:
+  - name: lakehouse
+    schema: silver
+    tables:
+      - name: feedback
+        columns:
+          - name: review_id
+            tests: [not_null, unique]
+          - name: product_id
+            tests: [not_null]
+          - name: rating
+            tests:
+              - not_null
+              - accepted_values:
+                  values: [1, 2, 3, 4, 5]
+      - name: aspect_sentiment
+        columns:
+          - name: review_id
+            tests: [not_null]
+          - name: aspect
+            tests: [not_null]

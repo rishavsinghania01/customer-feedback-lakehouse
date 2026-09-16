@@ -1,0 +1,3 @@
+aws_region          = "ap-south-1"
+environment         = "dev"
+kinesis_shard_count = 1

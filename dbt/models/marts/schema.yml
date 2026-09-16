@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: fct_feedback
+    description: One current record per review after idempotent upserts.
+    columns:
+      - name: review_id
+        tests: [not_null, unique]
+      - name: product_id
+        tests: [not_null]
+  - name: fct_aspect_sentiment
+    description: Aspect-level sentiment with the supporting review clause.
+    columns:
+      - name: review_id
+        tests: [not_null]
+      - name: aspect
+        tests: [not_null]
+  - name: agg_product_health_daily
+    description: Daily product and source metrics for operational reporting.
+    columns:
+      - name: event_date
+        tests: [not_null]
+      - name: product_id
+        tests: [not_null]

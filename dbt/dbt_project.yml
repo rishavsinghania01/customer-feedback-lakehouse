@@ -1,0 +1,17 @@
+name: customer_feedback_lakehouse
+version: 1.0.0
+config-version: 2
+
+profile: customer_feedback_lakehouse
+model-paths: ["models"]
+test-paths: ["tests"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  customer_feedback_lakehouse:
+    staging:
+      +schema: staging
+      +materialized: view
+    marts:
+      +schema: analytics
+      +materialized: table

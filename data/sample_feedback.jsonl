@@ -1,0 +1,6 @@
+{"review_id":"rev-1001","product_id":"phone-42","rating":2,"review_text":"The camera is excellent, but the battery drains quickly.","source":"mobile_app","created_at":"2026-09-15T09:15:00Z","schema_version":1,"customer_id_hash":"cust-a91"}
+{"review_id":"rev-1002","product_id":"phone-42","rating":5,"review_text":"The camera is clear and performance is fast. Great value for the price.","source":"web","created_at":"2026-09-15T10:20:00Z","schema_version":1,"customer_id_hash":"cust-b10"}
+{"review_id":"rev-1003","product_id":"headphones-7","rating":1,"review_text":"The delivery was late and the packaging was broken.","source":"marketplace","created_at":"2026-09-15T11:30:00Z","schema_version":1}
+{"review_id":"rev-1004","product_id":"headphones-7","rating":4,"review_text":"The sound quality is great and setup was easy.","source":"mobile_app","created_at":"2026-09-16T08:00:00Z","schema_version":1}
+{"review_id":"rev-0990","product_id":"phone-42","rating":3,"review_text":"Good camera but slow charging.","source":"web","created_at":"2026-09-12T07:00:00Z","schema_version":1}
+{"review_id":"rev-1005","product_id":"phone-42","rating":6,"review_text":"This invalid rating must be quarantined.","source":"web","created_at":"2026-09-16T09:00:00Z","schema_version":1}
