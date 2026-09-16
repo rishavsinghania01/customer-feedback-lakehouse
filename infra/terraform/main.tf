@@ -17,8 +17,8 @@ resource "aws_s3_bucket" "data" {
 }
 
 resource "aws_s3_bucket_public_access_block" "data" {
-  for_each = aws_s3_bucket.data
-  bucket   = each.value.id
+  for_each                = aws_s3_bucket.data
+  bucket                  = each.value.id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
@@ -44,11 +44,11 @@ resource "aws_s3_bucket_versioning" "data" {
 }
 
 resource "aws_kinesis_stream" "feedback" {
-  name             = "${local.name}-events"
-  shard_count      = var.kinesis_shard_count
-  retention_period = 24
-  encryption_type  = "KMS"
-  kms_key_id       = "alias/aws/kinesis"
+  name                = "${local.name}-events"
+  shard_count         = var.kinesis_shard_count
+  retention_period    = 24
+  encryption_type     = "KMS"
+  kms_key_id          = "alias/aws/kinesis"
   shard_level_metrics = ["IncomingBytes", "IncomingRecords", "IteratorAgeMilliseconds"]
 }
 
@@ -95,9 +95,9 @@ resource "aws_iam_role" "emr_execution" {
 
 data "aws_iam_policy_document" "emr_access" {
   statement {
-    sid       = "DataBuckets"
-    effect    = "Allow"
-    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+    sid     = "DataBuckets"
+    effect  = "Allow"
+    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
     resources = concat(
       [for bucket in aws_s3_bucket.data : bucket.arn],
       [for bucket in aws_s3_bucket.data : "${bucket.arn}/*"]
