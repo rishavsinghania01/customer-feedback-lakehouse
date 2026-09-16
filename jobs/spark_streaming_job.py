@@ -27,6 +27,16 @@ EVENT_SCHEMA = StructType(
 )
 
 
+# from_json in PERMISSIVE mode puts an unparseable payload's text in this field
+# instead of failing the row, which is how malformed JSON is told apart from a
+# well-formed object that is merely missing fields.
+CORRUPT_RECORD = "_corrupt_record"
+PARSE_SCHEMA = StructType(EVENT_SCHEMA.fields + [StructField(CORRUPT_RECORD, StringType())])
+PARSE_OPTIONS = {"mode": "PERMISSIVE", "columnNameOfCorruptRecord": CORRUPT_RECORD}
+
+LATE_AFTER_HOURS = 24
+
+
 def spark_session() -> SparkSession:
     return SparkSession.builder.appName("customer-feedback-stream").getOrCreate()
 
@@ -60,6 +70,7 @@ def ensure_tables(spark: SparkSession, catalog: str) -> None:
             schema_version int,
             customer_id_hash string,
             event_hash string,
+            is_late boolean,
             processed_at timestamp
         ) using iceberg
         partitioned by (days(created_at), product_id)
@@ -80,20 +91,61 @@ def ensure_tables(spark: SparkSession, catalog: str) -> None:
     )
 
 
+def parse_events(raw: DataFrame) -> DataFrame:
+    """Turn Kafka records (value, partition, offset, timestamp) into contract rows.
+
+    The raw JSON is kept as payload_json and hashed before parsing, so Bronze and
+    quarantine always hold exactly what arrived, and an identical redelivery has
+    an identical event_hash whatever the parser makes of it.
+    """
+    return (
+        raw.select(
+            F.col("value").cast("string").alias("payload_json"),
+            "partition",
+            "offset",
+            "timestamp",
+        )
+        .withColumn("event_hash", F.sha2("payload_json", 256))
+        .withColumn("event", F.from_json("payload_json", PARSE_SCHEMA, PARSE_OPTIONS))
+        .withColumn("parse_error", F.col(f"event.{CORRUPT_RECORD}"))
+        .withColumn("event", F.col("event").dropFields(CORRUPT_RECORD))
+    )
+
+
+def validation_error(parsed: DataFrame) -> DataFrame:
+    """Add error_reason: null for a valid row, the first failed rule otherwise.
+
+    Every rule tests for null explicitly. In Spark SQL a comparison with null is
+    null, not false, and a filter drops null rows on both sides of a negation, so
+    a row whose rating was missing used to vanish from both the valid and the
+    invalid stream. Naming the rule also gives the runbook something to group
+    quarantine by.
+    """
+    rating = F.col("event.rating")
+    version = F.col("event.schema_version")
+    reason = (
+        F.when(
+            F.col("event").isNull() | F.col("parse_error").isNotNull(), "payload is not valid JSON"
+        )
+        .when(F.col("event.review_id").isNull(), "review_id is required")
+        .when(F.col("event.product_id").isNull(), "product_id is required")
+        .when(F.col("event.review_text").isNull(), "review_text is required")
+        .when(F.col("event.source").isNull(), "source is required")
+        .when(F.col("event.created_at").isNull(), "created_at is required")
+        .when(rating.isNull() | ~rating.between(1, 5), "rating must be between 1 and 5")
+        .when(version.isNull() | (version != 1), "unsupported schema_version")
+    )
+    return parsed.withColumn("error_reason", reason)
+
+
 def validate(parsed: DataFrame) -> tuple[DataFrame, DataFrame]:
-    required = (
-        F.col("event.review_id").isNotNull()
-        & F.col("event.product_id").isNotNull()
-        & F.col("event.review_text").isNotNull()
-        & F.col("event.source").isNotNull()
-        & F.col("event.created_at").isNotNull()
-        & F.col("event.rating").between(1, 5)
-        & (F.col("event.schema_version") == 1)
-    )
-    valid = parsed.filter(required)
-    invalid = parsed.filter(~required).withColumn(
-        "error_reason", F.lit("event failed the version-one data contract")
-    )
+    """Split parsed rows into the valid and the quarantine stream.
+
+    Every input row lands in exactly one of the two outputs.
+    """
+    checked = validation_error(parsed)
+    valid = checked.filter(F.col("error_reason").isNull()).drop("error_reason")
+    invalid = checked.filter(F.col("error_reason").isNotNull())
     return valid, invalid
 
 
@@ -101,8 +153,16 @@ def process_valid_batch(batch: DataFrame, batch_id: int, catalog: str) -> None:
     if batch.isEmpty():
         return
     prepared = (
-        batch.select("event.*", "event_hash", "payload_json", "partition", "offset")
+        batch.select("event.*", "event_hash", "payload_json", "partition", "offset", "timestamp")
         .withColumn("updated_at", F.coalesce("updated_at", "created_at"))
+        # Late means the review happened long before the broker received it: the
+        # event time is more than the watermark behind the Kafka ingestion time.
+        # Kept as a flag, never dropped, so late arrivals stay queryable and countable.
+        .withColumn(
+            "is_late",
+            F.col("created_at")
+            < F.col("timestamp") - F.expr(f"interval {LATE_AFTER_HOURS} hours"),
+        )
         .withColumn("processed_at", F.current_timestamp())
     )
     prepared.select(
@@ -128,6 +188,7 @@ def process_valid_batch(batch: DataFrame, batch_id: int, catalog: str) -> None:
         "schema_version",
         "customer_id_hash",
         "event_hash",
+        "is_late",
         "processed_at",
     ).createOrReplaceTempView("feedback_microbatch")
 
@@ -172,18 +233,10 @@ def main() -> None:
         .option("failOnDataLoss", "false")
         .load()
     )
-    parsed = (
-        kafka.select(
-            F.col("value").cast("string").alias("payload_json"),
-            "partition",
-            "offset",
-            "timestamp",
-        )
-        .withColumn("event_hash", F.sha2("payload_json", 256))
-        .withColumn("event", F.from_json("payload_json", EVENT_SCHEMA))
+    valid, invalid = validate(parse_events(kafka))
+    valid = valid.withWatermark("timestamp", f"{LATE_AFTER_HOURS} hours").dropDuplicates(
+        ["event_hash"]
     )
-    valid, invalid = validate(parsed)
-    valid = valid.withWatermark("timestamp", "24 hours").dropDuplicates(["event_hash"])
 
     valid_query = (
         valid.writeStream.foreachBatch(
