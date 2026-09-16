@@ -30,7 +30,7 @@ dev = [
   "ruff>=0.8,<1",
 ]
 dashboard = ["streamlit>=1.40,<2"]
-spark = ["pyspark>=3.5,<3.6"]
+spark = ["pyspark>=3.5,<4.1"]
 
 [project.scripts]
 feedback-lakehouse = "feedback_lakehouse.cli:app"

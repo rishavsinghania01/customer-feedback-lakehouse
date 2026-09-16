@@ -8,6 +8,7 @@ on:
 
 jobs:
   test:
+    name: lint, unit and pipeline tests, dbt, image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +32,90 @@ jobs:
       - name: Build application image
         run: docker build -t customer-feedback-lakehouse:test .
 
+  spark:
+    name: Spark jobs on a local session and Iceberg catalog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          # pyspark 3.5, the version the compose image runs, supports up to 3.11.
+          python-version: "3.11"
+          cache: pip
+      - name: Install with the spark extra, pinned to the Spark line the compose image runs
+        run: pip install -e ".[spark]" "pyspark>=3.5,<3.6" pytest
+      - name: Cache the Iceberg runtime jar
+        uses: actions/cache@v4
+        with:
+          path: ~/.ivy2
+          key: ivy-${{ runner.os }}-${{ hashFiles('tests/test_spark_jobs.py') }}
+      - name: Run the streaming and enrichment jobs against local Iceberg tables
+        run: pytest tests/test_spark_jobs.py -v -p no:cacheprovider
+
+  dag:
+    name: Airflow DAG imports and chains its tasks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Airflow with its constraints file
+        run: >
+          pip install "apache-airflow==2.10.4" pytest
+          --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.4/constraints-3.11.txt"
+      - name: Import the DAG and check the task chain
+        env:
+          AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+        run: pytest tests/test_dag.py -v -p no:cacheprovider
+
+  streaming-stack:
+    name: Ingestion API publishes to Redpanda (compose smoke test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The compose file is valid
+        run: docker compose config --quiet
+      - name: Bring up the broker and the API
+        run: docker compose up -d --build redpanda redpanda-init ingestion-api
+      - name: Wait for the API
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health; then echo; exit 0; fi
+            sleep 2
+          done
+          echo "API did not become healthy"; docker compose logs ingestion-api; exit 1
+      - name: A valid event is accepted and an invalid one rejected at the boundary
+        run: |
+          set -euo pipefail
+          accepted=$(curl -sS -o /tmp/ok.json -w '%{http_code}' -X POST http://localhost:8000/v1/feedback \
+            -H 'content-type: application/json' \
+            -d '{"review_id":"ci-1","product_id":"phone-42","rating":2,"review_text":"The camera is great but the battery drains quickly.","source":"ci","created_at":"2026-09-16T10:00:00Z","schema_version":1}')
+          rejected=$(curl -sS -o /tmp/bad.json -w '%{http_code}' -X POST http://localhost:8000/v1/feedback \
+            -H 'content-type: application/json' \
+            -d '{"review_id":"ci-2","product_id":"phone-42","rating":9,"review_text":"Out of range.","source":"ci","created_at":"2026-09-16T10:00:00Z","schema_version":1}')
+          echo "valid -> $accepted $(cat /tmp/ok.json)"
+          echo "invalid -> $rejected $(cat /tmp/bad.json)"
+          test "$accepted" = "202"
+          test "$rejected" = "422"
+      - name: The accepted event is on the topic, keyed by review_id
+        run: |
+          set -euo pipefail
+          docker compose exec -T redpanda rpk topic consume feedback-events --brokers redpanda:9092 -n 1 -o start > /tmp/consumed.json
+          cat /tmp/consumed.json
+          grep -q '"key": "ci-1"' /tmp/consumed.json
+          grep -q 'ci-1' /tmp/consumed.json
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
+
   terraform:
+    name: Terraform formats, initialises and validates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
