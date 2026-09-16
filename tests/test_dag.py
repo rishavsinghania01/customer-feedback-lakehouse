@@ -8,6 +8,7 @@ official constraints file in its own job; locally the module is skipped.
 from __future__ import annotations
 
 import sys
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,7 @@ def test_dag_imports_and_chains_the_maintenance_steps_in_order() -> None:
     dag = load_dag()
     assert dag.dag_id == "feedback_lakehouse_maintenance"
     assert sorted(dag.task_ids) == sorted(EXPECTED_ORDER)
-    for upstream, downstream in zip(EXPECTED_ORDER, EXPECTED_ORDER[1:], strict=True):
+    for upstream, downstream in pairwise(EXPECTED_ORDER):
         assert downstream in dag.get_task(upstream).downstream_task_ids, (upstream, downstream)
     assert dag.get_task("enrich_aspects").upstream_task_ids == set()
     assert dag.get_task("quality_gate").downstream_task_ids == set()
