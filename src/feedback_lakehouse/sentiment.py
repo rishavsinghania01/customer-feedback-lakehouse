@@ -76,6 +76,17 @@ def _tokens(text: str) -> list[str]:
     return re.findall(r"[a-z']+", text.lower())
 
 
+# An alias matches a whole token or a common inflection of it ("photo" matches
+# "photos", "charge" matches "charged"). Matching is deliberately not by
+# substring: "because" contains "use", "flag" contains "lag" and "costume"
+# contains "cost", and each of those used to invent an aspect mention.
+_INFLECTIONS = ("", "s", "es", "d", "ed", "ing", "r", "er", "ers", "ly")
+
+
+def _mentions(tokens: set[str], alias: str) -> bool:
+    return any(alias + suffix in tokens for suffix in _INFLECTIONS)
+
+
 def score_aspects(text: str) -> list[AspectResult]:
     """Score sentiment near an aspect mention, keeping the supporting clause."""
 
@@ -90,7 +101,7 @@ def score_aspects(text: str) -> list[AspectResult]:
         label = "positive" if score > 0.1 else "negative" if score < -0.1 else "neutral"
 
         for aspect, aliases in ASPECT_ALIASES.items():
-            if any(alias in token_set or alias in clause.lower() for alias in aliases):
+            if any(_mentions(token_set, alias) for alias in aliases):
                 results.append(AspectResult(aspect, score, label, clause))
 
     best_by_aspect: dict[str, AspectResult] = {}
