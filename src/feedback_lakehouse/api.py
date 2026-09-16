@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from functools import lru_cache
 from pathlib import Path
 
 from confluent_kafka import Producer
@@ -16,19 +17,30 @@ app = FastAPI(title="Customer Feedback Ingestion API", version="1.0.0")
 _write_lock = threading.Lock()
 
 
+@lru_cache(maxsize=4)
+def _producer(bootstrap_servers: str) -> Producer:
+    """One producer per broker list for the life of the process.
+
+    A producer owns TCP connections, an idempotence session and a send
+    buffer. Building one per request (the earlier behaviour) leaked all
+    three and paid the broker handshake on every call.
+    """
+    return Producer(
+        {
+            "bootstrap.servers": bootstrap_servers,
+            "client.id": "feedback-ingestion-api",
+            "enable.idempotence": True,
+            "acks": "all",
+        }
+    )
+
+
 def _publish(event: FeedbackEvent) -> str:
     event_id = event.fingerprint()
     bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "").strip()
     topic = os.getenv("KAFKA_TOPIC", "feedback-events")
     if bootstrap_servers:
-        producer = Producer(
-            {
-                "bootstrap.servers": bootstrap_servers,
-                "client.id": "feedback-ingestion-api",
-                "enable.idempotence": True,
-                "acks": "all",
-            }
-        )
+        producer = _producer(bootstrap_servers)
         delivery_error: list[str] = []
 
         def delivered(error: object, _message: object) -> None:
