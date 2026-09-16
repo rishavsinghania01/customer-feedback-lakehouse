@@ -4,20 +4,39 @@
 
 An end-to-end batch and streaming data platform for customer reviews. It accepts historical files and live events, preserves immutable raw data, validates a versioned contract, handles duplicates and late updates, enriches review text with aspect-level sentiment, and publishes tested analytical marts.
 
-The repository includes a deterministic local pipeline that runs without cloud credentials and a production-shaped Spark, Iceberg and AWS path using the same data contract.
+The repository includes a deterministic local pipeline that runs without cloud credentials and a production-shaped Spark, Iceberg and AWS path using the same data contract. The two paths share the contract, the hashing rules, the stale-update rule and the sentiment scorer, so a behaviour tested on one is the behaviour of the other.
 
 ## What the system proves
 
-- Idempotent batch ingestion using source-file and event content hashes
-- Live event validation through FastAPI and Kafka-compatible publishing
-- Spark Structured Streaming with checkpoints, watermarks and quarantine routing
-- Iceberg Bronze, Silver and Gold layers with merge-based current state
-- Aspect sentiment enrichment that keeps the supporting text clause
-- Airflow maintenance orchestration and replayable backfill boundaries
-- Incremental dbt facts, aggregates and warehouse tests
-- Data-quality reconciliation, freshness-ready metadata and operational runbooks
-- Terraform for encrypted AWS storage, Kinesis, Glue Catalog, EMR Serverless and replay queues
-- Reproducible tests, linting, dbt builds, Terraform validation and image builds in CI
+Every claim below is checked by a CI job on every push. The badge above is the current result.
+
+| Behaviour | Where it is proven |
+|---|---|
+| A repeated source file is skipped by its SHA-256 before parsing; a repeated event is ignored by its content hash | `tests/test_pipeline.py`, and `make demo` running the sample twice |
+| Invalid ratings, naive timestamps, unknown fields and unsupported schema versions are rejected at the API boundary with 422 | `tests/test_contracts.py`, `tests/test_api.py`, and the compose smoke test posting to the real API |
+| An accepted event reaches the Kafka-compatible broker keyed by `review_id`, from one shared idempotent producer | `tests/test_api.py`; the `streaming-stack` CI job consumes it back from Redpanda with `rpk` |
+| The Spark stream routes every Kafka record into exactly one of the valid or quarantine streams, with a named reason, including malformed JSON and null fields | `tests/test_spark_jobs.py` on a local SparkSession |
+| Iceberg Bronze is append-only; Silver holds one current row per review and a stale update never overwrites a newer one; late events are flagged, not dropped | `tests/test_spark_jobs.py` running the real `MERGE INTO` against a local Iceberg catalog |
+| Aspect sentiment matches whole words, not substrings, and keeps the supporting clause as evidence | `tests/test_sentiment.py`, `tests/test_spark_jobs.py` |
+| The Airflow maintenance DAG imports, chains enrich, compact, dbt and gate in that order, contains no streaming task, and gates on the report exit code | `tests/test_dag.py` in the `dag` CI job |
+| `feedback-lakehouse report` exits non-zero when any quality invariant fails, so the DAG's quality gate can actually fail | `tests/test_cli.py` |
+| dbt staging, fact and aggregate models build and pass their tests on the pipeline output | `dbt build` in the `test` CI job |
+| The Terraform module formats, initialises and validates | `terraform` CI job |
+
+### Written and validated, but not executed in CI
+
+- The Spark stream has not been run end to end against a live broker. Its parsing, validation, hashing, late flag and Iceberg merge are tested on a local session by feeding it frames shaped exactly like the Kafka source; the `readStream.format("kafka")` wiring and checkpoint recovery are not exercised.
+- Terraform is validated, never applied. No AWS resource has been created from this module, so Kinesis, Glue Catalog and EMR Serverless are design, not evidence.
+- The compose `streaming` profile (Spark container with MinIO and the Iceberg REST catalog) has not been brought up in CI. CI brings up Redpanda and the API only.
+- No throughput or latency number is claimed anywhere. The DuckDB path is deterministic, not fast.
+
+### Defects the tests found
+
+Three behaviours were wrong before their tests existed, and the fixes are separate commits in the history:
+
+- Aspect matching used substring search, so `because` matched the alias `use`, `flag` matched `lag` and `costume` matched `cost`, inventing aspects that were never mentioned. It now matches whole tokens plus a fixed inflection list.
+- The Spark `validate` step filtered with `rating.between(1, 5)` and its negation. In Spark SQL a comparison with null is null, and null passes neither filter, so a row with a missing rating vanished from both streams. Every rule now tests null explicitly and the test asserts `valid + invalid == input`.
+- `feedback-lakehouse report` printed failing checks and exited 0, so the Airflow quality gate that runs it could never fail. It now exits 1.
 
 ## Architecture
 
@@ -131,7 +150,7 @@ dags/                     Airflow maintenance workflow
 dbt/                      staging, facts, aggregates and tests
 infra/terraform/          AWS infrastructure as code
 app/                      local operational dashboard
-tests/                    contract, API, enrichment and pipeline tests
+tests/                    contract, API, CLI, enrichment, pipeline, Spark-job and DAG tests
 docs/                     architecture, contract, demo and runbook
 ```
 
@@ -148,6 +167,8 @@ The incident and backfill procedures are documented in [docs/runbook.md](docs/ru
 
 ## Tests
 
+The default suite needs only Python:
+
 ```bash
 ruff check .
 pytest --cov=feedback_lakehouse --cov-report=term-missing
@@ -155,11 +176,25 @@ feedback-lakehouse demo --database build/lakehouse.duckdb
 cd dbt && LAKEHOUSE_DB=../build/lakehouse.duckdb dbt build --profiles-dir .
 ```
 
+Two modules skip themselves unless their runtime is installed, and CI runs each in its own job:
+
+```bash
+# Spark jobs against a local Iceberg catalog. Needs a JVM; the Iceberg jar is fetched once.
+pip install -e ".[spark]" && pytest tests/test_spark_jobs.py -v
+
+# Airflow DAG import. Install Airflow with its constraints file first.
+pytest tests/test_dag.py -v
+```
+
+CI runs five jobs: `test` (lint, unit and pipeline tests with an 85% coverage floor, the demo, dbt build, image build), `spark`, `dag`, `streaming-stack` (compose up Redpanda and the API, post a valid and an invalid event, read the valid one back off the topic) and `terraform`.
+
 ## Current limitations
 
-- The bundled sentiment component is deliberately transparent and lexicon-based. It is an enrichment example, not a general language model.
-- The deterministic CI path uses DuckDB; scale and latency claims require a separately recorded Spark benchmark.
-- The example deployment uses one AWS region and a single development Kinesis shard by default.
+- The bundled sentiment component is deliberately transparent and lexicon-based. It is an enrichment example, not a general language model, and it has no negation handling: "not bad" scores as negative.
+- The Spark stream's Kafka source, checkpoint recovery and the compose `streaming` profile are not exercised by any test. See "Written and validated, but not executed in CI" above.
+- The deterministic CI path uses DuckDB; scale and latency claims would need a separately recorded Spark benchmark, and none is made here.
+- The Airflow DAG's dbt and quality-gate tasks run against the DuckDB pipeline output. There is no dbt-spark profile, so Gold marts are not built from the Iceberg tables.
+- The example deployment uses one AWS region and a single development Kinesis shard by default, and has never been applied.
 - Production environments should add private networking, customer-managed encryption keys, central identity, alert routing and a remote Terraform state backend.
 
 ## License
