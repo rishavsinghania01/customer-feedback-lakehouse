@@ -26,9 +26,9 @@ Every claim below is checked by a CI job on every push. The badge above is the c
 ### Written and validated, but not executed in CI
 
 - The Spark stream has not been run end to end against a live broker. Its parsing, validation, hashing, late flag and Iceberg merge are tested on a local session by feeding it frames shaped exactly like the Kafka source; the `readStream.format("kafka")` wiring and checkpoint recovery are not exercised.
-- Terraform is validated, never applied. No AWS resource has been created from this module, so Kinesis, Glue Catalog and EMR Serverless are design, not evidence.
+- Terraform is validated, never applied. No AWS resource has been created from this module, so Kinesis, Glue Catalog and EMR Serverless exist only as a design.
 - The compose `streaming` profile (Spark container with MinIO and the Iceberg REST catalog) has not been brought up in CI. CI brings up Redpanda and the API only.
-- No throughput or latency number is claimed anywhere. The DuckDB path is deterministic, not fast.
+- No throughput or latency number is claimed anywhere. The DuckDB path is built to be deterministic, and nobody has tuned it for speed.
 
 ### Defects the tests found
 
@@ -160,7 +160,7 @@ docs/                     architecture, contract, demo and runbook
 - A repeated event payload is ignored by its content hash.
 - A newer review update replaces current Silver state; an older update is recorded as stale.
 - Contract failures retain their complete original payload and error in quarantine.
-- Late events remain queryable and are explicitly counted rather than silently discarded.
+- Late events stay queryable and are counted.
 - Streaming ingestion is not placed inside Airflow. Airflow runs finite enrichment, compaction, dbt and quality jobs.
 
 The incident and backfill procedures are documented in [docs/runbook.md](docs/runbook.md).
@@ -190,7 +190,7 @@ CI runs five jobs: `test` (lint, unit and pipeline tests with an 85% coverage fl
 
 ## Current limitations
 
-- The bundled sentiment component is deliberately transparent and lexicon-based. It is an enrichment example, not a general language model, and it has no negation handling: "not bad" scores as negative.
+- The bundled sentiment component is deliberately transparent and lexicon-based. It is an enrichment example with no negation handling: "not bad" scores as negative.
 - The Spark stream's Kafka source, checkpoint recovery and the compose `streaming` profile are not exercised by any test. See "Written and validated, but not executed in CI" above.
 - The deterministic CI path uses DuckDB; scale and latency claims would need a separately recorded Spark benchmark, and none is made here.
 - The Airflow DAG's dbt and quality-gate tasks run against the DuckDB pipeline output. There is no dbt-spark profile, so Gold marts are not built from the Iceberg tables.
