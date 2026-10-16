@@ -26,8 +26,8 @@ def _producer(bootstrap_servers: str) -> Producer:
     """One producer per broker list for the life of the process.
 
     A producer owns TCP connections, an idempotence session and a send
-    buffer. Building one per request (the earlier behaviour) leaked all
-    three and paid the broker handshake on every call.
+    buffer, so one per request would leak all three and repeat the broker
+    handshake on every call.
     """
     return Producer(
         {

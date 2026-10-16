@@ -116,8 +116,8 @@ def validation_error(parsed: DataFrame) -> DataFrame:
     """Add error_reason: null for a valid row, the first failed rule otherwise.
 
     Every rule tests for null explicitly. In Spark SQL a comparison with null is
-    null, not false, and a filter drops null rows on both sides of a negation, so
-    a row whose rating was missing used to vanish from both the valid and the
+    null, and a filter drops null rows on both sides of a negation, so without
+    the null checks a row with no rating would land in neither the valid nor the
     invalid stream. Naming the rule also gives the runbook something to group
     quarantine by.
     """
