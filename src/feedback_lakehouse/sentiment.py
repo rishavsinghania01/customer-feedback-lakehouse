@@ -77,9 +77,8 @@ def _tokens(text: str) -> list[str]:
 
 
 # An alias matches a whole token or a common inflection of it ("photo" matches
-# "photos", "charge" matches "charged"). Matching is deliberately not by
-# substring: "because" contains "use", "flag" contains "lag" and "costume"
-# contains "cost", and each of those used to invent an aspect mention.
+# "photos", "charge" matches "charged"). Substring matching would read "use" in
+# "because", "lag" in "flag" and "cost" in "costume" as aspect mentions.
 _INFLECTIONS = ("", "s", "es", "d", "ed", "ing", "r", "er", "ers", "ly")
 
 

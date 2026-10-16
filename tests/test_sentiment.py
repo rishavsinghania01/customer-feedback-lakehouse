@@ -17,7 +17,7 @@ def test_unmentioned_aspects_are_not_invented() -> None:
 
 
 def test_aliases_match_whole_words_not_substrings() -> None:
-    # Each of these used to invent an aspect: "because" contains "use",
+    # Each sentence hides an alias inside a longer word: "because" contains "use",
     # "flag" contains "lag", "breakfast" contains "fast", "costume" contains "cost".
     assert [r.aspect for r in score_aspects("I bought it because the photos are great.")] == [
         "camera"

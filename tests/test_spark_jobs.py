@@ -143,8 +143,8 @@ def test_every_row_lands_in_exactly_one_stream_with_a_named_reason(spark: SparkS
     reasons = {r.offset: r.error_reason for r in invalid.select("offset", "error_reason").collect()}
     assert reasons == {
         2: "rating must be between 1 and 5",
-        # Offset 3 used to be lost: a null rating made the whole predicate null,
-        # and a null passes neither `filter(required)` nor `filter(~required)`.
+        # Offset 3 has a null rating. That makes a plain predicate null, and a
+        # null passes neither `filter(required)` nor `filter(~required)`.
         3: "rating must be between 1 and 5",
         4: "unsupported schema_version",
         5: "review_id is required",
