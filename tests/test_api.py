@@ -109,3 +109,29 @@ def test_api_returns_503_when_the_broker_rejects_the_message(monkeypatch) -> Non
     assert response.status_code == 503
     assert response.json()["detail"] == "event broker unavailable"
     api._producer.cache_clear()
+
+
+def test_api_does_not_report_a_code_bug_as_a_broker_outage(monkeypatch) -> None:
+    from feedback_lakehouse import api
+
+    class BrokenProducer(FakeProducer):
+        def produce(self, topic: str, key: str, value: str, on_delivery) -> None:
+            raise TypeError("produce() got an unexpected keyword argument")
+
+    api._producer.cache_clear()
+    monkeypatch.setattr(api, "Producer", BrokenProducer)
+    monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "broker:9092")
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post(
+        "/v1/feedback",
+        json={
+            "review_id": "review-11",
+            "product_id": "product-1",
+            "rating": 3,
+            "review_text": "The delivery was late.",
+            "source": "web",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+    )
+    assert response.status_code == 500
+    api._producer.cache_clear()

@@ -8,13 +8,17 @@ import threading
 from functools import lru_cache
 from pathlib import Path
 
-from confluent_kafka import Producer
+from confluent_kafka import KafkaException, Producer
 from fastapi import FastAPI, HTTPException, status
 
 from .contracts import FeedbackEvent
 
 app = FastAPI(title="Customer Feedback Ingestion API", version="1.0.0")
 _write_lock = threading.Lock()
+
+
+class DeliveryFailed(Exception):
+    """The broker reported the message as undelivered."""
 
 
 @lru_cache(maxsize=4)
@@ -55,7 +59,7 @@ def _publish(event: FeedbackEvent) -> str:
         )
         producer.flush(10)
         if delivery_error:
-            raise RuntimeError(delivery_error[0])
+            raise DeliveryFailed(delivery_error[0])
         return event_id
 
     inbox = Path(os.getenv("LOCAL_INBOX", "runtime/api_inbox.jsonl"))
@@ -72,9 +76,11 @@ def health() -> dict[str, str]:
 
 @app.post("/v1/feedback", status_code=status.HTTP_202_ACCEPTED)
 def ingest_feedback(event: FeedbackEvent) -> dict[str, str]:
+    # BufferError is what produce() raises when the local send queue is full.
+    # OSError covers the local inbox file used when no broker is configured.
     try:
         event_id = _publish(event)
-    except Exception as exc:
+    except (DeliveryFailed, KafkaException, BufferError, OSError) as exc:
         raise HTTPException(status_code=503, detail="event broker unavailable") from exc
     return {"status": "accepted", "event_id": event_id, "review_id": event.review_id}
 
